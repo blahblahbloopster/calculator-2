@@ -1,0 +1,84 @@
+use std::str::FromStr;
+use rug::Complex;
+use rug::ops::Pow;
+use crate::complex;
+use crate::rpn::Calc;
+use crate::rpn::Function;
+use crate::rpn::RPNCommand;
+use crate::rpn::Operation;
+
+grammar(calc: &Calc);
+
+pub Expr: Option<Complex> = {
+    <left:Expr> "+" <right:Expr2> => Some(left? + right?),
+    <left:Expr> "-" <right:Expr2> => Some(left? - right?),
+    Expr2
+}
+
+Expr2: Option<Complex> = {
+    <left:Expr2> "*" <right:Expr3> => Some(left? * right?),
+    <left:Expr2> "/" <right:Expr3> => Some(left? / right?),
+    Expr3
+}
+
+Expr3: Option<Complex> = {
+    "-" <v:Expr3> => Some(-v?),
+    Expr4
+}
+
+Expr4: Option<Complex> = {
+    <left:Expr4> "^" <right:Expr5> => Some(left?.pow(right?)),
+    Expr5
+}
+
+Expr5: Option<Complex> = {
+    <v:Literal> => v,
+    <name:Identifier> <args:Arguments> => { let res = Function::find(name.to_string())?.evaluate(calc, args?); if res.len() != 1 { None } else { Some(res.first().unwrap().clone()) } },
+    "(" <e:Expr> ")" => e
+}
+
+Identifier: String = {
+    <v:r"[a-zA-Z]\w*"> => v.to_string()
+}
+
+Arguments: Option<Vec<Complex>> = {
+    "(" <initial:(<Expr> ",")*> <last:Expr?> ")" => {
+        let mut out = vec![];
+        for item in initial {
+            out.push(item?);
+        }
+        match last {
+            Some(v) => {
+                out.push(v?);
+                Some(out)
+            }
+            None => Some(out)
+        }
+    }
+}
+
+Literal: Option<Complex> = {
+    Float => complex!(<>, calc.prec),
+    "(" <real:Float> r"[,+]?" <im:Float> "i"? ")" => complex!(format!("({}, {})", real, im), calc.prec)
+}
+
+Float: String = {
+    <v:Decimal> "e" <em:"-"?> <e:Decimal> => format!("{}e{}{}", v, em.unwrap_or(""), e),
+    <v:Decimal> => v
+}
+
+Decimal: String = {
+    <whole:Digits> => whole,
+    <whole:Digits> "." <decimal:Digits> => whole + "." + &decimal
+};
+
+Digits: String = {
+    <v:r"\d+"> => v.to_string()
+}
+
+match {
+} else {
+    r"\s*" => { },
+    "'" => {},
+    _
+}
