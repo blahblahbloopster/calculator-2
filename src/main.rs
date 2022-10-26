@@ -1,7 +1,11 @@
 use std::io;
 use std::io::Write;
+use std::time::Duration;
 use regex::Regex;
 use rug::Float;
+use rustyline::{Behavior, Config, Editor};
+use rustyline::error::ReadlineError;
+use rustyline::highlight::Highlighter;
 use crate::rpn::Calc;
 extern crate lalrpop_util;
 
@@ -25,22 +29,35 @@ macro_rules! complex {
     };
 }
 
-fn main() {
-    let mut inp = String::new();
-    let stdin = io::stdin();
+struct Completioninator {}
+
+impl Highlighter for Completioninator {
+}
+
+fn main() -> rustyline::Result<()> {
+    let mut r1: Editor<()> = Editor::new()?;
+
+    // let mut inp = String::new();
+    // let stdin = io::stdin();
 
     let mut prec: u32 = 0;
     loop {
-        print!("precision: ");
-        io::stdout().flush().expect("failed to flush stdout???");
-        inp.clear();
-        stdin.read_line(&mut inp).expect("failed to read from stdin");
-        match inp.replace("\n", "").parse::<u32>() {
-            Ok(v @ 10..=65536) => {
-                prec = v;
-                break
+        // print!("precision: ");
+        // io::stdout().flush().expect("failed to flush stdout???");
+        // inp.clear();
+        // stdin.read_line(&mut inp).expect("failed to read from stdin");
+        let inp = r1.readline("precision: ")?.replace("\n", "");
+        if inp.is_empty() {
+            prec = 1024;
+            break;
+        } else {
+            match inp.parse::<u32>() {
+                Ok(v @ 10..=65536) => {
+                    prec = v;
+                    break
+                }
+                _ => println!("Enter a valid number!")
             }
-            _ => println!("Enter a valid number!")
         }
     }
     let mut calc = Calc::new(prec);
@@ -85,16 +102,36 @@ fn main() {
         return s.to_string() + &*trailing_zeros.replace(string.as_str(), "");
     };
     loop {
-        print!("> ");
-        io::stdout().flush().expect("failed to flush stdout???");
-        inp.clear();
-        stdin.read_line(&mut inp).expect("failed to read from stdin");
-        inp = inp.replace("\n", "");
+        // print!("> ");
+        // io::stdout().flush().expect("failed to flush stdout???");
+        // inp.clear();
+        // stdin.read_line(&mut inp).expect("failed to read from stdin");
+        let line = match r1.readline("> ") {
+            Ok(l) => l,
+            Err(ReadlineError::Interrupted) => {
+                // std::thread::sleep(Duration::new(1, 0));
+                // io::stdout().write(&[0x7F])?;
+                // io::stdout().flush()?;
+                // std::thread::sleep(Duration::new(1, 0));
+                // print!("^C");
+                // io::stdout().flush()?;
+                // std::thread::sleep(Duration::new(1, 0));
+                continue;
+            },
+            Err(ReadlineError::Eof) => {
+                return Ok(());
+            },
+            Err(_) => {
+                continue;
+            }
+        };
+        let inp = line.replace("\n", "");
         match inp.as_str() {
             "q" | "quit" | "exit" => break,
             "clear" => print!("\x1B[2J\x1B[1;1H"),  // clear the screen as well as the stack
             _ => {}
         }
+        r1.add_history_entry(inp.clone());
         match parser.parse(&calc, inp.as_str()) {
             Ok(v) => {
                 let mut mapped = vec![];
@@ -136,4 +173,6 @@ fn main() {
             println!("{}", out)
         }
     }
+
+    Ok(())
 }

@@ -10,6 +10,7 @@ build = "build.rs"
 rug = "1.16.0"
 lalrpop-util = { version = "0.19.8", features = ["lexer"] }
 regex = "1"
+rustyline = "10.0.0"
 
 [build-dependencies.lalrpop]
 version = "0.19.8"
