@@ -6,60 +6,64 @@ use crate::rpn::Calc;
 use crate::rpn::Function;
 use crate::rpn::RPNCommand;
 use crate::rpn::Operation;
+use crate::infixtree::IPT;
+use crate::infixtree::PR;
+use crate::infixtree::InfixParseTree::*;
 
 grammar(calc: &Calc);
 
-pub Expr: Option<Complex> = {
-    <left:Expr> "+" <right:Expr2> => Some(left? + right?),
-    <left:Expr> "-" <right:Expr2> => Some(left? - right?),
+pub Expr: IPT = {
+    <start:@L> <left:Expr> <l:@L> "+" <r:@R> <right:Expr2> <end:@R> => PR::new(start..end, Op(vec![left, right], PR::new(l..r, Operation::Add))),
+    <start:@L> <left:Expr> <l:@L> "-" <r:@R> <right:Expr2> <end:@R> => PR::new(start..end, Op(vec![left, right], PR::new(l..r, Operation::Sub))),
     Expr2
 }
 
-Expr2: Option<Complex> = {
-    <left:Expr2> "*" <right:Expr3> => Some(left? * right?),
-    <left:Expr2> "/" <right:Expr3> => Some(left? / right?),
+Expr2: IPT = {
+    <start:@L> <left:Expr2> <l:@L> "*" <r:@R> <right:Expr3> <end:@R> => PR::new(start..end, Op(vec![left, right], PR::new(l..r, Operation::Mul))),
+    <start:@L> <left:Expr2> <l:@L> "/" <r:@R> <right:Expr3> <end:@R> => PR::new(start..end, Op(vec![left, right], PR::new(l..r, Operation::Div))),
     Expr3
 }
 
-Expr3: Option<Complex> = {
-    "-" <v:Expr3> => Some(-v?),
+Expr3: IPT = {
+    <start:@L> <l:@L> "-" <r:@R> <v:Expr3> <end:@R> => PR::new(start..end, Op(vec![v], PR::new(l..r, Operation::UMinus))),
     Expr4
 }
 
-Expr4: Option<Complex> = {
-    <left:Expr4> "^" <right:Expr5> => Some(left?.pow(right?)),
+Expr4: IPT = {
+    <start:@L> <left:Expr4> <l:@L> "^" <r:@R> <right:Expr5> <end:@R> => PR::new(start..end, Op(vec![left, right], PR::new(l..r, Operation::Pow))),
     Expr5
 }
 
-Expr5: Option<Complex> = {
-    <v:Literal> => v,
-    <name:Identifier> <args:Arguments> => { let res = Function::find(name.to_string())?.evaluate(calc, args?); if res.len() != 1 { None } else { Some(res.first().unwrap().clone()) } },
-    "(" <e:Expr> ")" => e
+Expr5: IPT = {
+    <start:@L> <v:Literal> <end:@R> => v,
+    <start:@L> <l:@L> <name:Identifier> <r:@R> <args:Arguments> <end:@R> => PR::new(start..end, Op(*args.item, PR::new(l..r, Operation::Func(Function::Unknown(name))))),
+    <start:@L> "(" <e:Expr> ")" <end:@R> => e
 }
 
 Identifier: String = {
     <v:r"[a-zA-Z]\w*"> => v.to_string()
 }
 
-Arguments: Option<Vec<Complex>> = {
-    "(" <initial:(<Expr> ",")*> <last:Expr?> ")" => {
+Arguments: PR<Vec<IPT>> = {
+    <start:@L> "(" <initial:(<Expr> ",")*> <last:Expr?> ")" <end:@R> => {
         let mut out = vec![];
         for item in initial {
-            out.push(item?);
+            out.push(item);
         }
         match last {
             Some(v) => {
-                out.push(v?);
-                Some(out)
+                out.push(v);
+                // Some(out)
+                PR::new(start..end, out)
             }
-            None => Some(out)
+            None => PR::new(start..end, out)
         }
     }
 }
 
-Literal: Option<Complex> = {
-    Float => complex!(<>, calc.prec),
-    "(" <real:Float> r"[,+]?" <im:Float> "i"? ")" => complex!(format!("({}, {})", real, im), calc.prec)
+Literal: IPT = {
+    <start:@L> <v:Float> <end:@R> => PR::new(start..end, Literal(v)),
+    <start:@L> "(" <real:Float> r"[,+]?" <im:Float> "i"? ")" <end:@R> => PR::new(start..end, Literal(format!("({}, {})", real, im)))
 }
 
 Float: String = {

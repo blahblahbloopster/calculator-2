@@ -50,7 +50,7 @@ pub Command: Option<RPNCommand> = {
 //         Some(RPNCommand::VarGet("i".to_string()))
 //     },
     "=" <i:identifier> => Some(RPNCommand::VarSet(i.to_string())),
-    <infix> => Some(RPNCommand::Number(match ExprParser::new().parse(calc, <>) { Ok(n) => n?, Err(_) => return None }))
+    <infix> => Some(RPNCommand::Infix(*match ExprParser::new().parse(calc, <>) { Ok(n) => n.item, Err(_) => return None }))
 }
 
 pub Commands: Vec<Option<RPNCommand>> = {

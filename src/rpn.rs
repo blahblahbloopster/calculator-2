@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::fmt::{Display, format, Formatter};
+use std::fmt::{Display, format, Formatter, write};
 use std::ops::Add;
 use std::result::Result;
 use rug::{Complex, Float};
@@ -7,7 +7,8 @@ use rug::float::Constant::*;
 use rug::ops::Pow;
 use Function::*;
 use Operation::*;
-use crate::rpn::EvalError::{EmptyStack, VarNotFound};
+use crate::infixtree::InfixParseTree;
+use crate::rpn::EvalError::{EmptyStack, FunctionNotFound, VarNotFound};
 
 // TODO: undo?
 pub enum RPNCommand {
@@ -17,7 +18,8 @@ pub enum RPNCommand {
     VarSet(String),
     VarGet(String),
     Clear,
-    Duplicate
+    Duplicate,
+    Infix(InfixParseTree)
 }
 
 impl Display for RPNCommand {
@@ -29,6 +31,7 @@ impl Display for RPNCommand {
             RPNCommand::VarGet(n) => { write!(f, "{}", n) }
             RPNCommand::Clear => { f.write_str("clear") }
             RPNCommand::Duplicate => { f.write_str("d") }
+            RPNCommand::Infix(tree) => { write!(f, "'{}'", tree) }
         }
     }
 }
@@ -56,7 +59,8 @@ pub enum Function {
     Sin, Cos, Tan, Cot,
     ASin, ACos, ATan, ATan2, ACot,
     Sqrt,
-    Drop(usize)
+    Drop(usize),
+    Unknown(String)
 }
 
 impl Display for Function {
@@ -76,6 +80,7 @@ impl Display for Function {
                 let string = format!("drop*{}", n);
                 string.to_string()
             }
+            Unknown(name) => name.clone()
         })
     }
 }
@@ -87,14 +92,30 @@ pub struct Calc {
 }
 
 impl Operation {
-    fn num_args(&self) -> usize {
+    fn num_args(&self) -> Option<usize> {
         match self {
-            Add | Sub | Mul | Div | Pow => 2,
-            UMinus => 1,
+            Add | Sub | Mul | Div | Pow => Some(2),
+            UMinus => Some(1),
             Func(func) => match func {
-                Sin | Cos | Tan | Cot | ASin | ACos | ATan | ACot | Sqrt => 1,
-                ATan2 => 2,
-                Drop(n) => *n
+                Sin | Cos | Tan | Cot | ASin | ACos | ATan | ACot | Sqrt => Some(1),
+                ATan2 => Some(2),
+                Drop(n) => Some(*n),
+                Unknown(name) => Func(Function::find(name.clone())?).num_args()
+            }
+        }
+    }
+
+    pub(crate) fn eval(&self, calc: &Calc, args: Vec<Complex>) -> Result<Vec<Complex>, EvalError> {
+        match self {
+            Add => Ok(vec![args[0].clone() + args[1].clone()]),
+            Sub => Ok(vec![args[0].clone() - args[1].clone()]),
+            Mul => Ok(vec![args[0].clone() * args[1].clone()]),
+            Div => Ok(vec![args[0].clone() / args[1].clone()]),
+            Pow => Ok(vec![args[0].clone().pow(args[1].clone())]),
+            UMinus => Ok(vec![args[0].clone() * -1]),
+            Func(func) => match func.evaluate(calc, args) {
+                Some(v) => Ok(v),
+                None => { return Err(FunctionNotFound { name: func.to_string() }) }
             }
         }
     }
@@ -102,19 +123,20 @@ impl Operation {
 
 impl Function {
     // TODO: result
-    pub fn evaluate(&self, calc: &Calc, args: Vec<Complex>) -> Vec<Complex> {
+    pub fn evaluate(&self, calc: &Calc, args: Vec<Complex>) -> Option<Vec<Complex>> {
         match self {
-            Sin => vec![args[0].clone().sin()],
-            Cos => vec![args[0].clone().cos()],
-            Tan => vec![args[0].clone().tan()],
-            Cot => vec![args[0].clone().tan().recip()],
-            ASin => vec![args[0].clone().asin()],
-            ACos => vec![args[0].clone().acos()],
-            ATan => vec![args[0].clone().atan()],
-            ATan2 => vec![Float::atan2(args[0].real().clone(), args[1].real()).as_complex().clone()],
-            ACot => vec![(calc.pi() / 2) - args[0].clone().atan()],
-            Sqrt => vec![args[0].clone().sqrt()],
-            Drop(_) => vec![]
+            Sin => Some(vec![args[0].clone().sin()]),
+            Cos => Some(vec![args[0].clone().cos()]),
+            Tan => Some(vec![args[0].clone().tan()]),
+            Cot => Some(vec![args[0].clone().tan().recip()]),
+            ASin => Some(vec![args[0].clone().asin()]),
+            ACos => Some(vec![args[0].clone().acos()]),
+            ATan => Some(vec![args[0].clone().atan()]),
+            ATan2 => Some(vec![Float::atan2(args[0].real().clone(), args[1].real()).as_complex().clone()]),
+            ACot => Some(vec![(calc.pi() / 2) - args[0].clone().atan()]),
+            Sqrt => Some(vec![args[0].clone().sqrt()]),
+            Drop(_) => Some(vec![]),
+            Unknown(name) => Function::find(name.to_string())?.evaluate(calc, args)
         }
     }
 
@@ -159,7 +181,11 @@ impl Calc {
             }
             RPNCommand::Op(op) => {
                 let mut args = vec![];
-                for _ in 0..op.num_args() {
+                let num_args = match op.num_args() {
+                    Some(n) => n,
+                    None => { return Err(FunctionNotFound { name: op.to_string() }) }
+                };
+                for _ in 0..num_args {
                     let gotten = self.stack.pop();
                     match gotten {
                         Some(t) => args.push(t),
@@ -167,15 +193,7 @@ impl Calc {
                     }
                 }
                 args.reverse();
-                let output = match op {
-                    Add => vec![args[0].clone() + args[1].clone()],
-                    Sub => vec![args[0].clone() - args[1].clone()],
-                    Mul => vec![args[0].clone() * args[1].clone()],
-                    Div => vec![args[0].clone() / args[1].clone()],
-                    Pow => vec![args[0].clone().pow(args[1].clone())],
-                    UMinus => vec![args[0].clone() * -1],
-                    Func(func) => func.evaluate(self, args)
-                };
+                let output = op.eval(self, args)?;
                 for item in &output {
                     if item.real().is_nan() || item.imag().is_nan() {
                         return Err(EvalError::MathError)
@@ -207,6 +225,10 @@ impl Calc {
                 };
                 self.stack.push(item);
             }
+            RPNCommand::Infix(tree) => {
+                let res = tree.eval(self)?;
+                self.stack.extend(res);
+            }
         }
         Ok(())
     }
@@ -215,7 +237,8 @@ impl Calc {
 pub enum EvalError {
     EmptyStack,
     VarNotFound { name: String },
-    MathError
+    MathError,
+    FunctionNotFound { name: String }
 }
 
 impl Display for EvalError {
@@ -224,6 +247,7 @@ impl Display for EvalError {
             EmptyStack => { f.write_str("empty stack") }
             VarNotFound { name } => { write!(f, "variable '{}' not found", name) }
             EvalError::MathError => { f.write_str("math error") }
+            FunctionNotFound { name } => { write!(f, "function '{}' not found", name) }
         }
     }
 }

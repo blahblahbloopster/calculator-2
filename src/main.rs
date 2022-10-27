@@ -10,9 +10,11 @@ use crate::rpn::Calc;
 extern crate lalrpop_util;
 
 mod rpn;
-mod infix;
 mod rpncommand;
 mod units;
+mod infixtree;
+mod infix;
+
 use crate::rpncommand::CommandsParser;
 
 #[macro_export]
