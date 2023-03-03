@@ -21,6 +21,7 @@ pub Expr: IPT = {
 Expr2: IPT = {
     <start:@L> <left:Expr2> <l:@L> "*" <r:@R> <right:Expr3> <end:@R> => PR::new(start..end, Op(vec![left, right], PR::new(l..r, Operation::Mul))),
     <start:@L> <left:Expr2> <l:@L> "/" <r:@R> <right:Expr3> <end:@R> => PR::new(start..end, Op(vec![left, right], PR::new(l..r, Operation::Div))),
+//    <start:@L> <left:Expr2> <right:Expr2> <end:@L> => PR::new(start..end, Op(vec![left, right], PR::new(left..left, Operation::ul))),
     Expr3
 }
 
@@ -37,7 +38,8 @@ Expr4: IPT = {
 Expr5: IPT = {
     <start:@L> <v:Literal> <end:@R> => v,
     <start:@L> <l:@L> <name:Identifier> <r:@R> <args:Arguments> <end:@R> => PR::new(start..end, Op(*args.item, PR::new(l..r, Operation::Func(Function::Unknown(name))))),
-    <start:@L> "(" <e:Expr> ")" <end:@R> => e
+    <start:@L> <name:Identifier> <end:@R> => PR::new(start..end, VarGet(name)),
+    <start:@L> "(" <e:Expr> ")" <end:@R> => PR::new(start..end, Parens(PR::new(start..start + 1, '('), e, PR::new(end - 1..end, ')')))
 }
 
 Identifier: String = {

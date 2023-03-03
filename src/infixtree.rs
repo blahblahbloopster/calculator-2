@@ -6,8 +6,8 @@ use crate::rpn::{EvalError, Operation};
 use crate::rpn::EvalError::VarNotFound;
 
 pub struct PR<T> {
-    range: Range<usize>,
-    pub(crate) item: Box<T>
+    pub range: Range<usize>,
+    pub item: Box<T>
 }
 
 impl<T> PR<T> {
@@ -22,7 +22,7 @@ pub enum InfixParseTree {
     Op(Vec<IPT>, PR<Operation>),
     Literal(String),
     Parens(PR<char>, IPT, PR<char>),
-    VarGet(PR<String>)
+    VarGet(String)
 }
 
 impl Display for InfixParseTree {
@@ -37,7 +37,7 @@ impl Display for InfixParseTree {
             }
             InfixParseTree::Literal(v) => write!(f, "{}", v),
             InfixParseTree::Parens(_, v, _) => write!(f, "({})", *v.item),
-            InfixParseTree::VarGet(v) => write!(f, "{}", *v.item)
+            InfixParseTree::VarGet(v) => write!(f, "{}", *v)
         }
     }
 }
@@ -61,8 +61,8 @@ impl InfixParseTree {
             }
             InfixParseTree::Parens(_, v, _) => v.item.eval(calc),
             InfixParseTree::VarGet(name) => {
-                let var = calc.vars.get(name.item.as_str());
-                let found = var.ok_or(VarNotFound { name: *name.item.clone() })?;
+                let var = calc.vars.get(name.as_str());
+                let found = var.ok_or(VarNotFound { name: name.clone() })?;
                 Ok(vec![found.clone()])
             }
         }

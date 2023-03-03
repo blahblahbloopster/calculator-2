@@ -7,53 +7,63 @@ use crate::rpn::Function;
 use crate::rpn::RPNCommand;
 use crate::rpn::Operation;
 use crate::infix::ExprParser;
+use crate::infixtree::PR;
+use crate::rpncommand::RPNCommand::*;
+use crate::rpn::RPT;
 
 grammar(calc: &Calc);
 
-Literal: Option<Complex> = {
-    <num> <i?> => {
-        let (num, i) = (<>);
-        match i {
+Literal: Option<RPT> = {
+    <start:@L> <num:num> <i:i?> <end:@R> => {
+        // let (num, i) = (<>);
+        let res = match i {
             Some(_) => complex!(format!("(0, {})", num), calc.prec),
             None => complex!(num, calc.prec)
-        }
+        };
+        Some(PR::new(start..end, Number(res)))
         // complex!(format!("{}{}", num, if i.is_some() { "i" } else { "" }), calc.prec)
  },
-    "(" <real:num> r"[,+]?" <im:num> i? ")" => complex!(format!("({}, {})", real, im), calc.prec)
+    <start:@L> "(" <real:num> r"[,+]?" <im:num> i? ")" <end:@R> => Some(PR::new(start..end, Number(complex!(format!("({}, {})", real, im), calc.prec))))
 }
 
-pub Command: Option<RPNCommand> = {
-    "+" => Some(RPNCommand::Op(Operation::Add)),
-    "-" => Some(RPNCommand::Op(Operation::Sub)),
-    "*" => Some(RPNCommand::Op(Operation::Mul)),
-    "/" => Some(RPNCommand::Op(Operation::Div)),
-    "^" => Some(RPNCommand::Op(Operation::Pow)),
-    "m" => Some(RPNCommand::Op(Operation::UMinus)),
-    <l:Literal> => match l {
-        Some(v) => Some(RPNCommand::Number(v)),
+pub Command: Option<RPT> = {
+    <start:@L> "+" <end:@R> => Some(PR::new(start..end, RPNCommand::Op(Operation::Add))),
+    <start:@L> "-" <end:@R> => Some(PR::new(start..end, RPNCommand::Op(Operation::Sub))),
+    <start:@L> "*" <end:@R> => Some(PR::new(start..end, RPNCommand::Op(Operation::Mul))),
+    <start:@L> "/" <end:@R> => Some(PR::new(start..end, RPNCommand::Op(Operation::Div))),
+    <start:@L> "^" <end:@R> => Some(PR::new(start..end, RPNCommand::Op(Operation::Pow))),
+    <start:@L> "m" <end:@R> => Some(PR::new(start..end, RPNCommand::Op(Operation::UMinus))),
+    <start:@L> <l:Literal> <end:@R> => l /*match l {
+        Some(v) => Some(PR::new(start..end, RPNCommand::Number(v))),
         None => None
-    },
-    <i:identifier> => {
+    }*/,
+    <start:@L> <i:identifier> <end:@R> => {
         if i.chars().all(|x| { x == 'r' }) {
-            return Some(RPNCommand::Op(Operation::Func(Function::Drop(i.len()))))
+            return Some(PR::new(start..end, RPNCommand::Op(Operation::Func(Function::Drop(i.len())))))
         }
         match i {
-            "d" => Some(RPNCommand::Duplicate),
-            "clear" => Some(RPNCommand::Clear),
+            "d" => Some(PR::new(start..end, RPNCommand::Duplicate)),
+            "s" => Some(PR::new(start..end, RPNCommand::Swap)),
+            "clear" => Some(PR::new(start..end, RPNCommand::Clear)),
+            "copy" => Some(PR::new(start..end, RPNCommand::Clipboard)),
+            "clipboard" => Some(PR::new(start..end, RPNCommand::Clipboard)),
+            "name" => Some(PR::new(start..end, RPNCommand::PrettyPrint)),
+            "pretty" => Some(PR::new(start..end, RPNCommand::PrettyPrint)),
+            "prettyprint" => Some(PR::new(start..end, RPNCommand::PrettyPrint)),
             _ => match Function::find(i.to_string()) {
-                     Some(v) => Some(RPNCommand::Op(Operation::Func(v))),
-                     None => Some(RPNCommand::VarGet(i.to_string()))
+                     Some(v) => Some(PR::new(start..end, RPNCommand::Op(Operation::Func(v)))),
+                     None => Some(PR::new(start..end, RPNCommand::VarGet(i.to_string())))
                  }
          }
      },
 //     i => {
-//         Some(RPNCommand::VarGet("i".to_string()))
+//         Some(PR::new(start..end, RPNCommand::VarGet("i".to_string())))
 //     },
-    "=" <i:identifier> => Some(RPNCommand::VarSet(i.to_string())),
-    <infix> => Some(RPNCommand::Infix(*match ExprParser::new().parse(calc, <>) { Ok(n) => n.item, Err(_) => return None }))
+    <start:@L> "=" <i:identifier> <end:@R> => Some(PR::new(start..end, RPNCommand::VarSet(i.to_string()))),
+    <start:@L> <i:infix> <end:@R> => Some(PR::new(start..end, RPNCommand::Infix(PR::new((start + 1)..(end - 1), *match ExprParser::new().parse(calc, i) { Ok(n) => n.item, Err(_) => return None }))))
 }
 
-pub Commands: Vec<Option<RPNCommand>> = {
+pub Commands: Vec<Option<RPT>> = {
     (<Command>)+
 }
 

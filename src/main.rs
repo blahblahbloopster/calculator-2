@@ -1,12 +1,14 @@
+use std::borrow::Cow;
+use std::borrow::Cow::Owned;
+use std::collections::HashMap;
 use std::io;
 use std::io::Write;
-use std::time::Duration;
-use regex::Regex;
-use rug::Float;
-use rustyline::{Behavior, Config, Editor};
+use rustyline::Editor;
 use rustyline::error::ReadlineError;
 use rustyline::highlight::Highlighter;
-use crate::rpn::Calc;
+use crate::rpn::{Calc, PComplex, RPNCommand};
+use rustyline_derive::{Completer, Helper, Hinter, Validator};
+use crate::infixtree::{InfixParseTree, PR};
 extern crate lalrpop_util;
 
 mod rpn;
@@ -31,30 +33,169 @@ macro_rules! complex {
     };
 }
 
+#[derive(Helper, Completer, Hinter, Validator)]
 struct Completioninator {}
 
+enum Color {
+    Operator, Variable, Literal, Reset
+}
+
+impl Color {
+    fn ansi(&self) -> &str {
+        match self {
+            Color::Operator => { "\x1B[38;5;167m" }
+            Color::Variable => { "\x1B[38;5;2m" }
+            Color::Literal => { "\x1B[38;5;69m" }
+            Color::Reset => { "\x1B[0m" }
+        }
+    }
+}
+
+struct ModifiableString {
+    original: String,
+    modifications: HashMap<usize, String>
+}
+
+impl ModifiableString {
+    fn string(&self) -> String {
+        let mut output = String::new();
+        for (i, c) in self.original.chars().enumerate() {
+            let addition = self.modifications.get(&i);
+            match addition {
+                Some(v) => output.push_str(v.as_str()),
+                None => {}
+            };
+            output.push(c);
+        }
+        match self.modifications.get(&self.original.len()) {
+            Some(v) => output.push_str(v.as_str()),
+            None => {}
+        };
+        output
+    }
+
+    fn before(&mut self, index: usize, value: String) {
+        match self.modifications.get_mut(&index) {
+            Some(v) => { v.push_str(value.as_str()) }
+            None => { self.modifications.insert(index, value); }
+        }
+    }
+
+    fn after(&mut self, index: usize, value: String) {
+        match self.modifications.get_mut(&index) {
+            Some(v) => { v.insert_str(0, value.as_str()) }
+            None => { self.modifications.insert(index, value); }
+        }
+    }
+
+    fn new(original: String) -> ModifiableString {
+        ModifiableString { original, modifications: HashMap::new() }
+    }
+}
+
+impl Completioninator {
+    fn highlight_infix(line: &mut ModifiableString, tree: &PR<InfixParseTree>) {
+        match &*tree.item {
+            InfixParseTree::Op(args, operation) => {
+                for item in args {
+                    Completioninator::highlight_infix(line, &item);
+                    line.before(operation.range.start, Color::Operator.ansi().to_string());
+                    line.after(operation.range.end, Color::Reset.ansi().to_string());
+                }
+            }
+            InfixParseTree::Literal(_) => {
+                line.before(tree.range.start, Color::Literal.ansi().to_string());
+                line.after(tree.range.end, Color::Reset.ansi().to_string());
+            }
+            InfixParseTree::Parens(_, content, _) => {
+                Completioninator::highlight_infix(line, &content)
+            }
+            InfixParseTree::VarGet(_) => {
+                line.before(tree.range.start, Color::Variable.ansi().to_string());
+                line.after(tree.range.end, Color::Reset.ansi().to_string());
+            }
+        }
+    }
+}
+
 impl Highlighter for Completioninator {
+    fn highlight<'l>(&self, line: &'l str, _: usize) -> Cow<'l, str> {
+        let calc = Calc::new(1);
+        let parsed = match CommandsParser::new().parse(&calc, line.strip_prefix("> ").unwrap_or(line)) {
+            Ok(v) => v,
+            Err(_) => { /*println!("{}", e); */return Owned(line.to_string()) }
+        };
+        let mut output = ModifiableString::new(line.to_string());
+        for item in parsed.iter().rev() {
+            match item {
+                Some(v) => {
+                    match &*v.item {
+                        RPNCommand::Number(_) => {
+                            output.before(v.range.start, Color::Literal.ansi().to_string());
+                            output.after(v.range.end, Color::Reset.ansi().to_string());
+                        }
+                        RPNCommand::Op(_) => {
+                            output.before(v.range.start, Color::Operator.ansi().to_string());
+                            output.after(v.range.end, Color::Reset.ansi().to_string());
+                        }
+                        RPNCommand::VarSet(_) => {
+                            output.before(v.range.start, Color::Variable.ansi().to_string());
+                            output.after(v.range.end, Color::Reset.ansi().to_string());
+                        }
+                        RPNCommand::VarGet(_) => {
+                            output.before(v.range.start, Color::Variable.ansi().to_string());
+                            output.after(v.range.end, Color::Reset.ansi().to_string());
+                        }
+                        RPNCommand::Clear => {
+                            output.before(v.range.start, Color::Operator.ansi().to_string());
+                            output.after(v.range.end, Color::Reset.ansi().to_string());
+                        }
+                        RPNCommand::Duplicate => {
+                            output.before(v.range.start, Color::Operator.ansi().to_string());
+                            output.after(v.range.end, Color::Reset.ansi().to_string());
+                        }
+                        RPNCommand::Swap => {
+                            output.before(v.range.start, Color::Operator.ansi().to_string());
+                            output.after(v.range.end, Color::Reset.ansi().to_string());
+                        }
+                        RPNCommand::Infix(tree) => {
+                            Completioninator::highlight_infix(&mut output, tree)
+                        }
+                        RPNCommand::Clipboard => {
+                            output.before(v.range.start, Color::Operator.ansi().to_string());
+                            output.after(v.range.end, Color::Reset.ansi().to_string());
+                        }
+                        RPNCommand::PrettyPrint => {
+                            output.before(v.range.start, Color::Operator.ansi().to_string());
+                            output.after(v.range.end, Color::Reset.ansi().to_string());
+                        }
+                    }
+                }
+                None => {}
+            }
+        }
+        Owned(output.string())
+    }
+
+    fn highlight_char(&self, _: &str, _: usize) -> bool {
+        true
+    }
 }
 
 fn main() -> rustyline::Result<()> {
-    let mut r1: Editor<()> = Editor::new()?;
+    let mut r1: Editor<Completioninator> = Editor::new()?;
+    let helper = Completioninator {};
+    r1.set_helper(Some(helper));
 
-    // let mut inp = String::new();
-    // let stdin = io::stdin();
-
-    let mut prec: u32 = 0;
+    let prec: u32;
     loop {
-        // print!("precision: ");
-        // io::stdout().flush().expect("failed to flush stdout???");
-        // inp.clear();
-        // stdin.read_line(&mut inp).expect("failed to read from stdin");
         let inp = r1.readline("precision: ")?.replace("\n", "");
         if inp.is_empty() {
             prec = 1024;
             break;
         } else {
             match inp.parse::<u32>() {
-                Ok(v @ 10..=65536) => {
+                Ok(v @ 10..=16777216) => {
                     prec = v;
                     break
                 }
@@ -65,59 +206,11 @@ fn main() -> rustyline::Result<()> {
     let mut calc = Calc::new(prec);
 
     let parser = CommandsParser::new();
-    let trailing_zeros = Regex::new("\\.?0+$").unwrap();
-    let trailing_zeros_exp = Regex::new("\\.?0+e").unwrap();
-    let remove_zeros = |inp: &Float| {
-        let count = (inp.prec() as f64 / 10.0_f64.log2()) as usize + 2;
-        let (sign, digits, exp) = inp.to_sign_string_exp(10, Some(count - 2));
-        if exp.unwrap_or(0).abs() > 500 {
-            return trailing_zeros_exp.replace(inp.to_string_radix(10, Some(count - 2)).as_str(), "e").to_string()
-        }
-        let point_location = digits.len() as i32 - exp.unwrap_or(0) + 1;
-        let string = match point_location {
-            x if x <= 0 as i32 => {
-                let zeros = (-x) as usize + 1;
-                let mut d = digits.clone();
-                for _ in 0..zeros {
-                    d.push('0');
-                }
-                d.push_str(".0");
-                d
-            }
-            x if x > digits.len() as i32 => {
-                let count = point_location as usize - digits.len();
-                let mut output = String::new();
-                output.push_str("0.");
-                for _ in 0..count - 1 {
-                    output.push('0');
-                }
-                output.push_str(&*digits);
-                output
-            }
-            _ => {
-                let mut d = digits.clone();
-                d.insert(exp.unwrap() as usize, '.');
-                d
-            }
-        };
-        let s = if sign { "-" } else { "" };
-        return s.to_string() + &*trailing_zeros.replace(string.as_str(), "");
-    };
     loop {
-        // print!("> ");
-        // io::stdout().flush().expect("failed to flush stdout???");
-        // inp.clear();
-        // stdin.read_line(&mut inp).expect("failed to read from stdin");
+        let mut print_stack = true;
         let line = match r1.readline("> ") {
             Ok(l) => l,
             Err(ReadlineError::Interrupted) => {
-                // std::thread::sleep(Duration::new(1, 0));
-                // io::stdout().write(&[0x7F])?;
-                // io::stdout().flush()?;
-                // std::thread::sleep(Duration::new(1, 0));
-                // print!("^C");
-                // io::stdout().flush()?;
-                // std::thread::sleep(Duration::new(1, 0));
                 continue;
             },
             Err(ReadlineError::Eof) => {
@@ -130,7 +223,17 @@ fn main() -> rustyline::Result<()> {
         let inp = line.replace("\n", "");
         match inp.as_str() {
             "q" | "quit" | "exit" => break,
-            "clear" => print!("\x1B[2J\x1B[1;1H"),  // clear the screen as well as the stack
+            "clear" => {
+                // clear the screen as well as the stack
+                io::stdout().write(b"\x1b[H\x1b[2J")?;
+                io::stdout().flush()?;
+            }
+            "" => {
+                for item in &calc.stack {
+                    println!("{}", PComplex(item))
+                }
+                continue;        
+            }
             _ => {}
         }
         r1.add_history_entry(inp.clone());
@@ -149,7 +252,13 @@ fn main() -> rustyline::Result<()> {
 
                 let pre = calc.stack.clone();
                 for c in mapped {
-                    match calc.exec(c) {
+                    match *c.item {
+                        RPNCommand::PrettyPrint => {
+                            print_stack = false;
+                        }
+                        _ => {}
+                    }
+                    match calc.exec(*c.item) {
                         Ok(_) => {}
                         Err(e) => { println!("\nEvaluation error! {}", e); calc.stack = pre; break; }
                     }
@@ -160,19 +269,11 @@ fn main() -> rustyline::Result<()> {
                 continue
             }
         }
+        if !print_stack {
+            continue;
+        }
         for item in &calc.stack {
-            let out =
-                if item.imag().is_zero() { remove_zeros(item.real()) }
-                else if item.real().is_zero() {
-                    let img = item.imag();
-                    if img.is_integer() && img.to_f64() == 1.0 {
-                        "i".to_string()
-                    } else {
-                        format!("{}i", remove_zeros(item.imag()))
-                    }
-                }
-                else { format!("{} + {}i", remove_zeros(item.real()), remove_zeros(item.imag())) };
-            println!("{}", out)
+            println!("{}", PComplex(item))
         }
     }
 
